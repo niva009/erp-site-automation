@@ -38,6 +38,10 @@ const componySchema = Schema ( {
         type: String,
         required: true,
     },
+    abbreviation: {
+        type: String,
+        required: true,
+    },
     user: {
         type: Number,
         required: true,

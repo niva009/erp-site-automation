@@ -11,7 +11,23 @@
 
 
 
-    
+  function makeAbbr(words) {
+    words = words.trim();
+    const length = words.length;
+    let acronym = words[0];
+
+    for (let i = 1; i < length; i++) {
+      if (words[i - 1] === ' ' && words[i] !== ' ') {
+        acronym += words[i];
+      }
+    }
+
+    return acronym.toUpperCase();
+  }
+
+
+
+
   const validateEmail = (email) => {
     return String(email)
       .toLowerCase()
@@ -50,6 +66,12 @@
       });
     }
 
+    const abbreviation = makeAbbr(company_name);
+    console.log("abbreviation", abbreviation);
+
+
+
+
     const saltRounds = parseInt(process.env.SALT, 10) || 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
@@ -64,6 +86,7 @@
       phone_number,
       plan,
       company_address,
+      abbreviation,
       user,
     });
 
@@ -114,7 +137,7 @@
     const companyProfile = await componySchema.findByIdAndUpdate(
       componyId,
       { site_url: site._id },
-      { new: true } 
+      { new: true }
     );
 
     if (!companyProfile) {
@@ -157,10 +180,8 @@
       const company = await componySchema.findById(id).populate("site_url");
       if (!company) return res.status(404).json({ message: "Company not found" });
 
-      const siteName = company.site_url.site_url;
+      const siteName = company.site_url?.site_url;
       if (!siteName) return res.status(400).json({ message: "Site name missing in company" });
-
-      console.log("site name:", siteName);
 
       const sitePath = path.join("/home/frappe/frappe-bench/sites", siteName);
       if (fs.existsSync(sitePath)) {
@@ -169,7 +190,6 @@
 
       const mysqlRootPassword = process.env.MYSQL_ROOT_PASS || "root";
       const adminPassword = "admin123";
-
       const siteId = company.site_url._id;
 
       try {
@@ -179,7 +199,6 @@
           "/home/frappe/frappe-bench"
         );
 
-        // Verify folder exists
         if (!fs.existsSync(sitePath)) {
           throw new Error("bench new-site failed: site folder not found");
         }
@@ -202,16 +221,27 @@
           "/home/frappe/frappe-bench"
         );
 
-        // ✅ Mark as completed
+        // Step 5: Install your custom app
+        await runCommand(
+          `bench --site ${siteName} install-app compony`,
+          "/home/frappe/frappe-bench"
+        );
+
+        await runCommand(
+          `bench --site ${siteName} execute compony.compony.api.create_company --args '["${company.name}", "${company.abbreviation}", "${company.country || "India"}"]'`,
+          "/home/frappe/frappe-bench"
+        );
+
+        // Update status
         await siteSchema.findByIdAndUpdate(siteId, { status: "completed" });
 
         return res.status(200).json({
-          message: "ERPNext site with HRMS & Payments created successfully",
+          message: "ERPNext site with HRMS, Payments & Company created successfully",
           siteName,
         });
 
       } catch (err) {
-        console.error(`Site creation failed for ${siteName}:`, err.message);
+        console.error(`❌ Site creation failed for ${siteName}:`, err.message);
 
         if (fs.existsSync(sitePath)) {
           console.log("⚠️ Site folder exists despite error, marking as completed");
@@ -240,27 +270,29 @@
 
 
 
-  const siteDetails = asyncHandler(async(req ,res) => {
+
+
+  const siteDetails = asyncHandler(async (req, res) => {
 
     const siteDetails = await componySchema.find({});
 
-    if(!siteDetails){
+    if (!siteDetails) {
       return res.status(400).json({
         message: "sites not found"
       });
     }
 
-      return res.status(200).json({
-        message: "site details",
-        data: siteDetails
-      })
+    return res.status(200).json({
+      message: "site details",
+      data: siteDetails
+    })
 
   });
 
   const statusInfomation = asyncHandler(async (req, res) => {
 
     const { id } = req.params;
-    console.log("id" ,id)
+    console.log("id", id)
     const company = await componySchema.findById(id).populate("site_url");
     console.log("compony", company);
 
@@ -283,4 +315,4 @@
 
 
 
-  module.exports = { addUserDetails, siteUrlCreation, erpssiteCreation, siteDetails, statusInfomation};
+  module.exports = { addUserDetails, siteUrlCreation, erpssiteCreation, siteDetails, statusInfomation };
