@@ -3,6 +3,7 @@
       const bcrypt = require('bcryptjs');
       const siteSchema = require("../Model/siteSchema");
       const { spawn } = require("child_process");
+      const { sendEmail, sendAdminEmail } = require("./mailController");
       const fs = require('fs');
       const path = require("path");
 
@@ -80,6 +81,7 @@
           name,
           email,
           password: hashedPassword,
+          plain_password: password,
           company_name,
           user_name,
           country,
@@ -97,6 +99,47 @@
           data: adduser,
         });
       });
+
+
+
+      //////   reserve domains ///////////////////
+
+      const reservedWords = [
+        "www", "ftp", "mail", "smtp", "imap", "pop", "ns1", "ns2",
+        "admin", "api", "webmail", "autodiscover", "localhost",
+        "test", "sandbox", "root", "default", "cpanel", "secure",
+        "login", "accounts", "sso", "internal", "payments", "dev",
+        "us", "in", "uk", "eu", "home", "web", "portal", "site",
+        "main", "blog", "news", "media", "press", "wiki", "events",
+        "articles", "shop", "store", "cart", "products", "services",
+        "deals", "sale", "offers", "marketplace", "about", "info",
+        "contact", "help", "support", "careers", "jobs", "hr",
+        "partners", "investors", "signin", "signup", "register",
+        "user", "profile", "auth", "authentication", "verify", "mx",
+        "newsletter", "lists", "staging", "preprod", "beta", "docs",
+        "status", "ci", "cd", "git", "repo", "dashboard", "panel",
+        "control", "monitor", "management", "sysadmin", "console",
+        "whm", "cloud", "gateway", "vpn", "remote", "app", "apps",
+        "db", "database", "storage", "files", "backup", "intranet",
+        "private", "gallery", "video", "forum", "community", "whois",
+        "dns", "mysql", "pgsql", "oracle", "mssql", "sql", "data",
+        "elastic", "es", "kibana", "grafana", "prometheus",
+        "administrator", "config", "setup", "access", "identity",
+        "token", "faqs", "guide", "manuals", "training", "learn",
+        "academy", "school", "library", "research", "team",
+        "corporate", "build", "code", "apis", "graph", "graphql",
+        "swagger", "doc", "developer", "developers", "alpha",
+        "preview", "demo", "logs", "trace", "bug", "auth0", "openid",
+        "oauth", "webauthn", "webhooks", "integration", "connect",
+        "bridge", "metrics", "health", "alerts", "analytics",
+        "reporting", "experiment", "canary", "pipeline", "builds",
+        "qa", "helpdesk", "kb", "legal", "terms", "privacy",
+        "billing", "invoice", "chat", "messaging", "calls", "voip",
+        "cache", "cdn", "edge", "proxy", "global", "api1", "api2",
+        "eu-west", "us-east", "temp", "old", "archive", "test1",
+        "test2", "devops"
+      ];
+      
 
 
 
@@ -129,6 +172,14 @@
             message: "sitename already exists",
             sitename: sitename,
           });
+        } 
+
+        const rawName = site_url.toLowerCase().replace(".erpeaz.org", "");
+
+        if (reservedWords.includes(rawName)) {
+          return res.status(400).json({
+            message: "This name is a reserved word, cannot use",
+          });
         }
 
         const site = await siteSchema.create({ site_url: sitename });
@@ -154,6 +205,9 @@
 
 
       //---------------------------------------------------------erp next site creation Logic --------------------------------------------------------->
+
+
+    
 
       const runCommand = (command, cwd) => {
         return new Promise((resolve, reject) => {
@@ -190,7 +244,7 @@
           const mysqlRootPassword = process.env.MYSQL_ROOT_PASS || "root";
           const adminPassword = "admin123";
           const siteId = company.site_url._id;
-      
+          
           try {
             // Step 1: Create site
             await runCommand(
@@ -218,7 +272,7 @@
               "/home/frappe/frappe-bench"
             );
       
-            // Step 7: Install erpeaz_uae with error handling
+         
             console.log("Installing erpeaz_uae...");
             try {
               await runCommand(`bench --site ${siteName} install-app erpeaz_uae`, "/home/frappe/frappe-bench");
@@ -231,24 +285,65 @@
               `bench --site ${siteName} execute compony.compony.api.remove_gstin_field`,
               "/home/frappe/frappe-bench"
             );
+
+            if (company.country === "India") {
+              console.log("Installing india_compliance...");
+              await runCommand(`bench --site ${siteName} install-app india_compliance`, "/home/frappe/frappe-bench");
+            }else if (company.country === "Saudi Arabia") {
+              console.log("Installing saudi_compliance...");
+              await runCommand(`bench --site ${siteName} install-app zatca_erpgulf`, "/home/frappe/frappe-bench");
+            } 
       
             await runCommand(`bench --site ${siteName} migrate`, "/home/frappe/frappe-bench");
 
 
+            const planRoleMap = {
+              Professional: "Standard IT Admin",
+              Ultimate: "Ultimate Service Admin",
+              Basic: "Basic Plan General Trading User",
+            };
+            
+            
+            const plan = (company.plan || "").trim();
+            const roleForPlan = planRoleMap[plan] || "Standard IT Admin";
+            const roles = [roleForPlan];
+
 
             const defaultUser = {
               email: company.email || "admin@" + siteName,
-              fullName: company.user_name || company.user_name,
-              password: "User@123", 
-              roles: ["Standard IT Admin"],
-              company: company.company_name
+              fullName: company.user_name,
+              password: company?.plain_password || "User@123",  
+              roles: roles,
+              company: company.company_name,
             };
-      
 
+
+            
+
+              await runCommand(
+                `bench --site ${siteName} execute compony.compony.api.create_default_user --args '["${defaultUser.email}", "${defaultUser.fullName}", "${defaultUser.password}", ${JSON.stringify(defaultUser.roles)}, "${defaultUser.company}"]'`,
+                "/home/frappe/frappe-bench"
+              );
+
+              console.log("compony url", company.site_url);
+
+              await sendEmail(company.email, company.email, company.plain_password, company.site_url?.site_url);
+              await sendAdminEmail(company.site_url, company.user_name);
+
+              
+            // Step 9: Setup Nginx and SSL
             await runCommand(
-              `bench --site ${siteName} execute compony.compony.api.create_default_user --args '["${defaultUser.email}", "${defaultUser.fullName}", "${defaultUser.password}", ${JSON.stringify(defaultUser.roles)}, "${defaultUser.company}"]'`,
+              `yes | bench setup nginx`,
               "/home/frappe/frappe-bench"
             );
+
+            // No --email needed in new bench
+            await runCommand(
+              `yes | sudo bench setup lets-encrypt ${siteName}`,
+              "/home/frappe/frappe-bench"
+            );
+
+              
             
             // Step 10: Mark site as completed
             await siteSchema.findByIdAndUpdate(siteId, { status: "completed" });
@@ -288,7 +383,7 @@
 
       const siteDetails = asyncHandler(async (req, res) => {
 
-        const siteDetails = await componySchema.find({});
+        const siteDetails = await componySchema.find({}).populate("site_url");
 
         if (!siteDetails) {
           return res.status(400).json({
