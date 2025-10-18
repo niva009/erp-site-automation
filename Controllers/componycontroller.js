@@ -3,7 +3,9 @@
       const bcrypt = require('bcryptjs');
       const siteSchema = require("../Model/siteSchema");
       const { spawn } = require("child_process");
-      const { sendEmail, sendAdminEmail } = require("./mailController");
+      const  sendEmail = require("./mailController");
+      const sendAdminEmail = require('./mailAdminController')
+      const userMail = require('./mailuserController.js')
       const fs = require('fs');
       const path = require("path");
 
@@ -101,9 +103,6 @@
       });
 
 
-
-      //////   reserve domains ///////////////////
-
       const reservedWords = [
         "www", "ftp", "mail", "smtp", "imap", "pop", "ns1", "ns2",
         "admin", "api", "webmail", "autodiscover", "localhost",
@@ -129,7 +128,7 @@
         "academy", "school", "library", "research", "team",
         "corporate", "build", "code", "apis", "graph", "graphql",
         "swagger", "doc", "developer", "developers", "alpha",
-        "preview", "demo", "logs", "trace", "bug", "auth0", "openid",
+        "preview", "logs", "trace", "bug", "auth0", "openid",
         "oauth", "webauthn", "webhooks", "integration", "connect",
         "bridge", "metrics", "health", "alerts", "analytics",
         "reporting", "experiment", "canary", "pipeline", "builds",
@@ -226,14 +225,17 @@
 
 
       const erpssiteCreation = async (req, res) => {
+
         try {
           const { id } = req.params;
           if (!id) return res.status(400).json({ message: "Company ID is required!" });
       
           const company = await componySchema.findById(id).populate("site_url");
+
           if (!company) return res.status(404).json({ message: "Company not found" });
       
           const siteName = company.site_url?.site_url;
+
           if (!siteName) return res.status(400).json({ message: "Site name missing in company" });
       
           const sitePath = path.join("/home/frappe/frappe-bench/sites", siteName);
@@ -242,7 +244,7 @@
           }
       
           const mysqlRootPassword = process.env.MYSQL_ROOT_PASS || "root";
-          const adminPassword = "admin123";
+          const adminPassword = "S@@S25september";
           const siteId = company.site_url._id;
           
           try {
@@ -251,29 +253,34 @@
               `bench new-site ${siteName} --mariadb-root-password ${mysqlRootPassword} --admin-password ${adminPassword}`,
               "/home/frappe/frappe-bench"
             );
+
       
             if (!fs.existsSync(sitePath)) throw new Error("bench new-site failed: site folder not found");
       
-            // Step 2: Install ERPNext
+            await siteSchema.findByIdAndUpdate(siteId, { status: "apps Installation....." });
+
             await runCommand(`bench --site ${siteName} install-app erpnext`, "/home/frappe/frappe-bench");
+
       
-            // Step 3: Install HRMS
             await runCommand(`bench --site ${siteName} install-app hrms`, "/home/frappe/frappe-bench");
       
-            // Step 4: Install Payments
             await runCommand(`bench --site ${siteName} install-app payments`, "/home/frappe/frappe-bench");
-      
-            // Step 5: Install Company app
+
             await runCommand(`bench --site ${siteName} install-app compony`, "/home/frappe/frappe-bench");
+
+
+            await siteSchema.findByIdAndUpdate(siteId, { status: "compony creation....." });
+
       
-            // Step 6: Create company record
             await runCommand(
               `bench --site ${siteName} execute compony.compony.api.create_company --args '["${company.name}", "${company.abbreviation}", "${company.country || "India"}"]'`,
               "/home/frappe/frappe-bench"
             );
-      
-         
+
             console.log("Installing erpeaz_uae...");
+
+            await siteSchema.findByIdAndUpdate(siteId, { status: "Erpeaz Website installation....." });
+
             try {
               await runCommand(`bench --site ${siteName} install-app erpeaz_uae`, "/home/frappe/frappe-bench");
             } catch (err) {
@@ -293,16 +300,22 @@
               console.log("Installing saudi_compliance...");
               await runCommand(`bench --site ${siteName} install-app zatca_erpgulf`, "/home/frappe/frappe-bench");
             } 
-      
+                  
+            await siteSchema.findByIdAndUpdate(siteId, { status: "Migration Started....." });
+          
             await runCommand(`bench --site ${siteName} migrate`, "/home/frappe/frappe-bench");
+
+            await runCommand(`bench --site ${siteName} clear-cache`, "/home/frappe/frappe-bench");
 
 
             const planRoleMap = {
-              Professional: "Standard IT Admin",
-              Ultimate: "Ultimate Service Admin",
-              Basic: "Basic Plan General Trading User",
+              Professional: "Professional Admin",
+              Ultimate: "Ultimate Admin",
+              Basic: "Basic Admin",
+              Premium: "Premium Admin",
             };
             
+            await siteSchema.findByIdAndUpdate(siteId, { status: "User Creation....." });
             
             const plan = (company.plan || "").trim();
             const roleForPlan = planRoleMap[plan] || "Standard IT Admin";
@@ -312,62 +325,58 @@
             const defaultUser = {
               email: company.email || "admin@" + siteName,
               fullName: company.user_name,
-              password: company?.plain_password || "User@123",  
+              password: company?.plain_password || "S@ErpNext!2025#",  
               roles: roles,
               company: company.company_name,
             };
 
-
             
 
-              await runCommand(
-                `bench --site ${siteName} execute compony.compony.api.create_default_user --args '["${defaultUser.email}", "${defaultUser.fullName}", "${defaultUser.password}", ${JSON.stringify(defaultUser.roles)}, "${defaultUser.company}"]'`,
-                "/home/frappe/frappe-bench"
-              );
+            const defaultUserCommand = `bench --site ${siteName} execute compony.compony.api.create_default_user --args '["${defaultUser.email}", "${defaultUser.fullName}", "${defaultUser.password}", ${JSON.stringify(defaultUser.roles)}, "${defaultUser.company}"]'`;              
 
-              console.log("compony url", company.site_url);
+              setTimeout(async () => {
+                await runCommand(defaultUserCommand, "/home/frappe/frappe-bench");
+              }, 3000)
 
-              await sendEmail(company.email, company.email, company.plain_password, company.site_url?.site_url);
-              await sendAdminEmail(company.site_url, company.user_name);
+              console.log("compony site", company?.site_url?.site_url);
 
-              
-            // Step 9: Setup Nginx and SSL
+              await sendAdminEmail(siteName, company.user_name, company.email, company.phone_number, company.company_name, company.company_address);
+              console.log("Sending user email to:", company.email);
+              await userMail(company.email);
+              console.log("User email sent successfully");
+
             await runCommand(
               `yes | bench setup nginx`,
               "/home/frappe/frappe-bench"
             );
 
-            // No --email needed in new bench
             await runCommand(
-              `yes | sudo bench setup lets-encrypt ${siteName}`,
+              `yes | sudo /usr/local/bin/bench setup lets-encrypt ${siteName}`,
               "/home/frappe/frappe-bench"
             );
-
-              
             
-            // Step 10: Mark site as completed
-            await siteSchema.findByIdAndUpdate(siteId, { status: "completed" });
-      
+
+            await siteSchema.findByIdAndUpdate(siteId, { status: "ERPEZ Website cretion sucess....." });
+            
             return res.status(200).json({
               message: "ERPNext site with HRMS, Payments, Company & erpeaz_uae created successfully",
               siteName,
             });
       
           } catch (err) {
-            console.error(`Site creation failed for ${siteName}:`, err.message);
+            console.error(`Site creation failed for ${siteName}:`, err);
       
             if (fs.existsSync(sitePath)) {
               console.log("Site folder exists despite error, marking as completed");
+
               await siteSchema.findByIdAndUpdate(siteId, { status: "completed" });
-      
               return res.status(200).json({
                 message: "ERPNext site created successfully (with warnings)",
                 siteName,
               });
             }
-      
+
             await siteSchema.findByIdAndUpdate(siteId, { status: "error" });
-      
             return res.status(500).json({
               message: "Site creation failed",
               error: err.message,
@@ -380,6 +389,7 @@
       };
       
       
+
 
       const siteDetails = asyncHandler(async (req, res) => {
 
@@ -399,29 +409,61 @@
       });
 
       const statusInfomation = asyncHandler(async (req, res) => {
-
-        const { id } = req.params;
-        console.log("id", id)
-        const company = await componySchema.findById(id).populate("site_url");
-        console.log("compony", company);
-
-        if (!company) {
-          return res.status(404).json({ message: "Company not found" });
+        try {
+          const { id } = req.params;
+      
+          const company = await componySchema.findById(id).populate("site_url").lean();
+          if (!company) {
+            return res.status(404).json({ message: "Company not found" });
+          }
+      
+          if (!company.site_url) {
+            return res.status(404).json({ message: "Site not linked to this company" });
+          }
+      
+          const site = company.site_url; 
+          return res.json({
+            siteId: site._id,
+            siteUrl: site.site_url,
+            status: site.status || "pending",
+            progress: site.progress ?? 0,
+          });
+        } catch (err) {
+          console.error("Error fetching site status:", err);
+          return res.status(500).json({ message: "Internal Server Error" });
         }
-
-        const site = company.site_url;
-        if (!site) {
-          return res.json({ status: "pending", progress: 0 });
-        }
-
-        res.json({
-          status: site.status || "pending",
-          progress: site.progress || 0,
-        });
       });
 
 
+      const sendMailtoAdmin  = asyncHandler(async (req, res) => {
+        try {
+
+          const {id} = req.params;
+          const company = await componySchema.findById(id).populate("site_url").lean();
+          if (!company) {
+            return res.status(404).json({ message: "Company not found" });
+          }
+          let domain = company?.site_url?.site_url
+      
+          await sendEmail(company.email, company.email, company.plain_password, domain);
+          
+          return res.status(200).json({
+            message: "Email sent successfully to user",
+            email: company.email,
+            domain: domain
+          });
+        } catch(error){
+          console.log("error sending email to user", error);
+          return res.status(500).json({
+            message: "Failed to send email",
+            error: error.message
+          });
+        }
+      })
+      
 
 
 
-      module.exports = { addUserDetails, siteUrlCreation, erpssiteCreation, siteDetails, statusInfomation };
+
+
+      module.exports = { addUserDetails, siteUrlCreation, erpssiteCreation, siteDetails, statusInfomation, sendMailtoAdmin };
